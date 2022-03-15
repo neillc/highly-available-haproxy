@@ -1,0 +1,94 @@
+heat_template_version: 2016-10-14
+description: OpenStack instance with a floating IP. Used for the bastion host.
+
+parameters:
+  name:
+    type: string
+    description: The server name
+    default: ha-proxy-test-01
+
+  net_name:
+    type: string
+    description: the private network
+    default: ha-proxy-internal
+
+  external_network:
+    type: string
+    description: the floating ip network
+    default: public
+
+  role:
+    type: string
+    default: proxy
+
+  public_key:
+    type: string
+
+  private_ip_address:
+    type: string
+    description: the address on the private network
+
+  private_key:
+    type: string
+
+  security_group:
+    type: string
+
+resources:
+
+  server_port:
+    type: OS::Neutron::Port
+    properties:
+      network: {get_param: net_name}
+      fixed_ips: [ip_address: {get_param: private_ip_address}]
+      security_groups: [{get_param: security_group}]
+
+
+  floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: {get_param: external_network}
+
+
+  boot_volume:
+    type: OS::Cinder::Volume
+    properties:
+      size: 15
+      image: rhel8.4
+  server:
+    type: OS::Nova::Server
+    properties:
+      name: {get_param: name}
+      flavor: m1.medium
+      tags: [ {get_param: role}, "ha-proxy-group"]
+      metadata: 
+        groups: 
+          str_replace:
+            template: "$ROLE;ha-proxy-group"
+            params:
+              $ROLE: {get_param: role}
+      block_device_mapping_v2: 
+        - 
+          delete_on_termination: True
+          volume_id: {get_resource: boot_volume}
+      key_name: {get_param: public_key}
+      networks:
+        - 
+          port: {get_resource: server_port}
+          floating_ip: {get_resource: floating_ip}
+      user_data_format: RAW
+      user_data:
+        str_replace:
+          template: |
+            #!/bin/bash
+            cat << EOF > /home/cloud-user/.ssh/id_rsa
+            $KEY
+            EOF
+            chown cloud-user /home/cloud-user/.ssh/id_rsa
+            chmod 600 /home/cloud-user/.ssh/id_rsa
+          params:
+           $KEY: {get_param: private_key}
+outputs:
+  floating_ip:
+    description: the floating ip of the host
+    value: { get_attr: [floating_ip, floating_ip_address] }

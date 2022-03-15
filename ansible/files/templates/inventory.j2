@@ -1,0 +1,19 @@
+all:
+  hosts:
+    bastion:
+      ansible_host: {{ bastion.address }}
+  children:
+    backend:
+      hosts:{% for host in backend_hosts %}
+        {{ host.name}}:
+          ansible_host: {{ host.address }}{% endfor %}
+    proxy:
+      hosts:{% for host in proxy_hosts %}
+        {{ host.name}}:
+          ansible_host: {{ host.address }}{% endfor %}
+    internal:
+      children:
+        backend:
+        proxy:
+  vars:
+    ansible_user: cloud-user

@@ -1,0 +1,84 @@
+heat_template_version: 2016-10-14
+description: A basic OpenStack instance for testing.
+
+parameters:
+  name:
+    type: string
+    description: The server name
+    default: ha-proxy-test-01
+
+  net_name:
+    type: string
+    description: the private network
+    default: ha-proxy-internal
+
+  private_ip_address:
+    type: string
+    description: the address on the private network
+
+  role:
+    type: string
+    default: proxy
+
+  public_key:
+    type: string
+
+  security_group:
+    type: string
+
+  ssh_password:
+    type: string
+
+resources:
+  userdata:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: {get_resource: root_config}
+
+  root_config:
+    type: OS::Heat::CloudConfig
+    properties:
+      cloud_config:
+        ssh_pwauth: true
+        chpasswd:
+          list:
+            str_replace:
+              template: "cloud-user:PASSWORD"
+              params:
+                PASSWORD: {get_param: ssh_password}
+          expire: False
+
+  server_port:
+    type: OS::Neutron::Port
+    properties:
+      network: {get_param: net_name}
+      fixed_ips: [ip_address: {get_param: private_ip_address}]
+      security_groups: [{get_param: security_group}]
+
+  boot_volume:
+    type: OS::Cinder::Volume
+    properties:
+      size: 15
+      image: rhel8.4
+  server:
+    type: OS::Nova::Server
+    properties:
+      name: {get_param: name}
+      flavor: m1.medium
+      tags: [ {get_param: role}, "ha-proxy-group"]
+      block_device_mapping_v2: 
+        - 
+          delete_on_termination: True
+          volume_id: {get_resource: boot_volume}
+      key_name: {get_param: public_key}
+      metadata: 
+        groups: 
+          str_replace:
+            template: "$ROLE;ha-proxy-group"
+            params:
+              $ROLE: {get_param: role}
+      networks:
+        - 
+          port: {get_resource: server_port}
+

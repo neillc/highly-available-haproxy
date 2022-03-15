@@ -1,0 +1,6 @@
+    server {
+      server_name fe-{{item}};
+      location / {
+        proxy_pass http://{{hostvars[item].ansible_host}}/;
+      }
+    }

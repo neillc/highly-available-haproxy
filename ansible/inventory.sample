@@ -1,0 +1,25 @@
+all:
+  hosts:
+    bastion:
+      ansible_host: xxx.xxx.xxx.xxx
+  children:
+    backend:
+      hosts:
+        backend-01:
+          ansible_host: 172.16.5.127
+        backend-02:
+            ansible_host: 172.16.5.243
+        backend-03:
+            ansible_host: 172.16.5.10
+    proxy:
+      hosts:
+        proxy-02:
+            ansible_host: 172.16.5.80
+        proxy-01:
+            ansible_host: 172.16.5.218
+    internal:
+      children:
+        backend:
+        proxy:
+  vars:
+    ansible_user: cloud-user

@@ -1,0 +1,219 @@
+heat_template_version: 2016-10-14
+description: Standup infrastructure to test a highly available HA Proxy cluster
+
+parameters:
+  external_network_name:
+    type: string
+    description: The external network to use for access
+
+  private_network_name:
+    type: string
+    description: tenant network for the HA proxy and testing infrastructure
+    default: ha-proxy-internal
+
+  private_subnet_name:
+    type: string
+    description: subnet for the internal network.
+    default: ha-proxy-internal-subnet
+
+  private_subnet_cidr:
+    type: string
+    description: CIDR representation of the project subnet.
+    default: 172.16.5.0/24
+
+  private_subnet_gw_ip:
+    type: string
+    description: Gateway IP of Subnet
+    default: 172.16.5.1
+
+  public_key:
+    type: string
+
+  public_key_name:
+    type: string
+    default: os_dev
+
+  ssh_password:
+    type: string
+    description: Temporary setting to allow setting an ssh password for console access while debugging network issues.
+
+  security_group_name:
+    type: string
+    description: Instance Security Group 
+    default: hap-security-group
+
+  nameserver_ip1:
+    type: string
+    description: IP of the primary dns name server.
+
+  nameserver_ip2:
+    type: string
+    description: IP of the secondary dns name server.
+
+  test_port:
+    type: string
+    description: Port to allow access to for testing HA Proxy. Currently applied to all hosts in the ha-proxy group, but should probably only apply to the backend servers.
+
+resources:
+  private_network:
+    type: OS::Neutron::Net
+    properties:
+      name: { get_param: private_network_name }
+
+  private_subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      cidr: { get_param: private_subnet_cidr }
+      name: { get_param: private_subnet_name }
+      gateway_ip: { get_param: private_subnet_gw_ip }
+      network_id: { get_resource: private_network }
+      dns_nameservers: [{ get_param: nameserver_ip1 }, { get_param: nameserver_ip2 }]
+
+  gw_port1:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: private_network }
+      fixed_ips: [{"ip_address": {get_param: private_subnet_gw_ip }, "subnet_id": {get_resource: private_subnet }}]
+
+  router:
+    type: OS::Neutron::Router
+    properties:
+        external_gateway_info: 
+            network: public
+ 
+  router_interface1:
+    type: OS::Neutron::RouterInterface
+    properties:
+      router_id: { get_resource: router }
+      port_id: { get_resource: gw_port1 }
+
+  security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: test Security groups rule
+      name: { get_param: security_group_name }
+      rules: [{"port_range_max": 22, "port_range_min": 22, "protocol": tcp, "remote_ip_prefix": 0.0.0.0/0 },
+              {"port_range_max": 80, "port_range_min": 80, "protocol": tcp, "remote_ip_prefix": 0.0.0.0/0 },
+              {"port_range_max": { get_param: test_port }, "port_range_min": { get_param: test_port }, "protocol": tcp, "remote_ip_prefix": 0.0.0.0/0 },
+              {"protocol": icmp, "remote_ip_prefix": 0.0.0.0/0 }]
+
+  ryslog_rule:
+    depends_on: security_group
+    type: OS::Neutron::SecurityGroupRule
+    properties:
+      security_group: { get_resource: security_group }
+      port_range_max: 514
+      port_range_min: 514
+      protocol: udp
+      remote_group: {get_resource: security_group}
+      
+  vrrp_rule:
+    depends_on: security_group
+    type: OS::Neutron::SecurityGroupRule
+    properties:
+      security_group: { get_resource: security_group }
+      protocol: vrrp
+      remote_group: {get_resource: security_group}
+
+  bastion_public_key:
+    type: OS::Nova::KeyPair
+    properties:
+      public_key: {get_param: public_key}
+      name: {get_param: public_key_name}
+
+  internal_ssh_key:
+    type: OS::Nova::KeyPair
+    properties:
+      name: haproxy
+      save_private_key: True
+
+  bastion:
+    type: floating_ip_server.yaml
+    depends_on: internal_ssh_key
+    properties:
+        name: ha-bastion
+        net_name: {get_resource: private_network}
+        private_ip_address: 172.16.5.5
+        external_network: {get_param: external_network_name}
+        role: bastion
+        public_key: {get_resource: bastion_public_key}
+        private_key: {get_attr: [internal_ssh_key, private_key]}
+        security_group: {get_resource: security_group}
+  vip:
+    type: OS::Neutron::Port
+    properties:
+      name: ha_proxy_vip
+      network: {get_resource: private_network}
+      fixed_ips: [ip_address: 172.16.5.10]
+
+  floating_vip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: {get_param: external_network_name}
+      port_id: {get_resource: vip}
+
+  proxy-main:
+    type: proxy_server.yaml
+    properties:
+        name: ha-proxy-main
+        net_name: {get_resource: private_network}
+        private_ip_address: 172.16.5.11
+        role: "proxy;main" # can't use , in metadata
+        public_key: {get_resource: bastion_public_key}
+        security_group: {get_resource: security_group}
+        ssh_password: {get_param: ssh_password}
+        vip_ip: 172.16.5.10
+
+  proxy-spare:
+    type: proxy_server.yaml
+    properties:
+        name: ha-proxy-spare
+        net_name: {get_resource: private_network}
+        private_ip_address: 172.16.5.12
+        role: "proxy;spare" # can't use , in metadata
+        public_key: {get_resource: bastion_public_key}
+        security_group: {get_resource: security_group}
+        ssh_password: {get_param: ssh_password}
+        vip_ip: 172.16.5.10
+
+  backend-01:
+    type: base_server.yaml
+    properties:
+        name: backend-01
+        net_name: {get_resource: private_network}
+        private_ip_address: 172.16.5.20
+        role: backend
+        public_key: {get_resource: bastion_public_key}
+        security_group: {get_resource: security_group}
+        ssh_password: {get_param: ssh_password}
+
+  backend-02:
+    type: base_server.yaml
+    properties:
+        name: backend-02
+        net_name: {get_resource: private_network}
+        private_ip_address: 172.16.5.21
+        role: backend
+        public_key: {get_resource: bastion_public_key}
+        security_group: {get_resource: security_group}
+        ssh_password: {get_param: ssh_password}
+
+  backend-03:
+    type: base_server.yaml
+    properties:
+        name: backend-03
+        net_name: {get_resource: private_network}
+        private_ip_address: 172.16.5.22
+        role: backend
+        public_key: {get_resource: bastion_public_key}
+        security_group: {get_resource: security_group}
+        ssh_password: {get_param: ssh_password}
+
+outputs:
+  bastion_ip:
+    description: floating IP assigned to the bastion
+    value: { get_attr: [bastion, floating_ip] }
+
+  vip_ip:
+    description: floating IP assigned to keepalived vip
+    value: { get_attr: [floating_vip, floating_ip_address] }

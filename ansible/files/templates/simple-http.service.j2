@@ -1,0 +1,9 @@
+[Unit]
+Description=Simple http server for testing haproxy
+After=multi-user.target
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/bin/python3 -m http.server {{ha_backend_test_port}}
+WantedBy=multi-user.target
+WorkingDirectory=/home/cloud-user/

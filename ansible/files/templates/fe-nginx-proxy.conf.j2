@@ -1,0 +1,6 @@
+    server {
+      server_name fe-haproxy;
+      location / {
+        proxy_pass http://{{haproxy_vip}}/;
+      }
+    }

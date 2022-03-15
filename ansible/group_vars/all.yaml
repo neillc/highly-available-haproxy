@@ -1,0 +1,25 @@
+ansible_ssh_common_args: '-o "StrictHostKeyChecking=no"'
+
+app_1_ip: 172.16.5.20
+app_2_ip: 172.16.5.21
+app_3_ip: 172.16.5.22
+app_1_port: 80
+app_2_port: 80
+app_3_port: 80
+
+bastion_ip: "ha-bastion"
+bastion_private_ip: 172.16.5.5
+
+# FIXME: need this for now, but should fix.
+disable_gpg: yes
+
+haproxy_main_ip: 172.16.5.11
+haproxy_spare_ip: 172.16.5.12
+haproxy_vip: 172.16.5.10
+
+satellite_host: satellite.example.com
+satellite_org: "Example Corp"
+satellite_activation_key: "Example-AK"
+
+
+vrrp_password: supersecretpassw0rd

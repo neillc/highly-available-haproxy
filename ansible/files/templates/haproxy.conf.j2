@@ -1,0 +1,35 @@
+global
+        log {{ bastion_private_ip }}   local1 
+        maxconn 4096
+        user haproxy
+        group haproxy
+        daemon
+
+defaults
+        log     global
+        mode    http
+        option  httplog
+        option  dontlognull
+        retries 3
+        option redispatch
+        maxconn 2000
+        timeout connect  5000
+        timeout client   50000
+        timeout server   50000
+
+
+{% for service in services %}
+listen {{ service.name }}
+        bind {{ service.bind_address }}:{{ service.bind_port }}
+{% if "mode" in service %}        mode {{ service.mode }}{% endif %}
+        stats enable
+        stats uri /stats
+        balance {{ service.balance }}
+{% for option in service.options %}
+        option {{ option }}
+{% endfor %}
+{% for server in service.servers %}
+        server {{ server.name }} {{ server.ip }}:{{server.port | default (80)}} check
+{% endfor %}
+{% endfor %}
+

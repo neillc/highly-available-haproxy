@@ -1,0 +1,176 @@
+- hosts: all
+  tasks:
+    - name: 010 - Install katello (1/26)
+      become: yes
+      yum:
+        name: http://{{ satellite_host }}/pub/katello-ca-consumer-latest.noarch.rpm
+        disable_gpg_check: "{{ disable_gpg }}"
+      debugger: on_failed
+    - name: 020 - Register to satellite (2/26)
+      become: yes
+      community.general.redhat_subscription:
+        state: present
+        org_id: "{{ satellite_org }}"
+        activationkey: "{{ satellite_activation_key }}"
+        server_hostname: "{{ satellite_host }}"
+    - name: 030 - Upgrade all packages (3/26)
+      become: yes
+      dnf:
+        name: "*"
+        state: latest
+
+- hosts: backend
+  tasks:
+    - name: 100 - install nginx and python3 (4/26)
+      become: yes
+      yum:
+        name: "{{ item }}"
+        state: latest
+      loop:
+        - nginx
+        - python3
+    - name: 110 - start nginx (5/26)
+      become: yes
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: yes
+    - name: 120 - Setup index.html (6/26)
+      become: yes
+      ansible.builtin.template:
+        src: files/templates/index.html.j2
+        dest: /usr/share/nginx/html/index.html
+        owner: root
+        group: root
+        mode: '0644'
+    - name: 130 - Copy systemd service file to server  (7/26)
+      become: yes
+      ansible.builtin.template:
+        src: files/templates/simple-http.service.j2
+        dest: /etc/systemd/system/simple-http.service
+        owner: root
+        group: root
+        mode: '0700'
+    - name: 140 - Simple HTTP Service (8/26)
+      become: yes
+      systemd:
+        name: simple-http
+        state: started
+        daemon_reload: yes
+        enabled: yes
+    - name: 150 - index.html for simple http (9/26)
+      ansible.builtin.template:
+        src: files/templates/index.html.j2
+        dest: /home/cloud-user/index.html
+        owner: cloud-user
+        group: cloud-user
+        mode: '0644'
+- hosts: proxy
+  tasks:
+    - name: 200 - install packages  (10/26)
+      become: yes
+      yum:
+        name:
+          - haproxy.x86_64
+          - keepalived.x86_64
+          - python3-libselinux
+          - policycoreutils-python-utils
+        state: latest
+    - name: 210 - Allow haproxy to listen on non standard port (11/26)
+      become: yes
+      community.general.seport:
+        ports: "{{ ha_backend_test_port }}"
+        proto: tcp
+        setype: http_cache_port_t
+        state: present
+    - name: 220 - configure haproxy (12/26)
+      become: yes
+      ansible.builtin.template:
+        src: files/templates/haproxy.conf.j2
+        dest: /etc/haproxy/haproxy.cfg
+        owner: root
+        group: root
+        mode: '0644'
+    - name: 230 - start haproxy  (13/26)
+      become: yes
+      service:
+        name: haproxy
+        state: started
+        enabled: true
+    - name: 240 - configure keepalived (14/26)
+      become: yes
+      ansible.builtin.template:
+        src: files/templates/keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+        owner: root
+        group: root
+        mode: '0644'
+    - name: 240 - start keepalived (15/26)
+      become: yes
+      service:
+        name: keepalived
+        state: started
+        enabled: true
+- hosts: bastion
+  become: yes
+  tasks:
+    - name: 300 - Install nginx on bastion (16/26)
+      dnf:
+        name: nginx
+        state: latest
+    - name: 310 - start nginx on bastion (17/26)
+      service:
+        name: nginx
+        state: started
+        enabled: true
+    - name: 320 - adjust SE Linux (18/26)
+      seboolean:
+        name: httpd_can_network_connect
+        state: yes
+        persistent: yes
+    - name: 330 - Add nginx server for backend VMs (19/26)
+      ansible.builtin.template:
+        src: files/templates/fe-nginx-app.conf.j2
+        dest: /etc/nginx/conf.d/{{ item }}.conf
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ groups['backend'] }}"
+    - name: 340 - Add nginx server for proxy VMs (20/26)
+      ansible.builtin.template:
+        src: files/templates/fe-nginx-app.conf.j2
+        dest: /etc/nginx/conf.d/{{ item }}.conf
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ groups['proxy'] }}"
+    - name: 350 - Add nginx server for proxy VIP (21/26)
+      ansible.builtin.template:
+        src: files/templates/fe-nginx-proxy.conf.j2
+        dest: /etc/nginx/conf.d/haproxy.conf
+        owner: root
+        group: root
+        mode: '0644'
+    - name: 360 - restart nginx (22/26)
+      service:
+        name: nginx
+        state: restarted
+    - name: 370 - Enable rsyslogd imudp module (23/26)
+      replace:
+        path: /etc/rsyslog.conf
+        regexp: '^#(module\(load="imudp"\) # needs to be done just once)'
+        replace: '\1'
+    - name: 380 - Enable imudp input (24/26)
+      replace:
+        path: /etc/rsyslog.conf
+        regexp: '^#(input\(type="imudp" port="514"\))'
+        replace: '\1'
+    - name: 390 - Configure rsyslog for haproxy (25/26)
+      ansible.builtin.copy:
+        src: files/50-haproxy.conf
+        dest: /etc/rsyslog.d/50-haproxy.conf
+        mode: '0644'
+    - name: 395 - restart rsyslog (26/26)
+      service:
+        name: rsyslog
+        state: restarted

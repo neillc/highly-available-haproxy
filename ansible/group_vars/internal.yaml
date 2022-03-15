@@ -1,0 +1,1 @@
+ansible_ssh_common_args: '-J cloud-user@{{bastion_ip}} -o "StrictHostKeyChecking=no"'
